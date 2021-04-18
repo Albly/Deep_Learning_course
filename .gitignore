@@ -1,0 +1,8 @@
+*.zip
+!spec/*.zip
+tiny-imagenet-2020/*
+tiny-imagenet-200
+*.pt
+.ipynb_checkpoints
+__pycache__
+wandb
