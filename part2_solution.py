@@ -363,8 +363,8 @@ def get_checkpoint_metadata():
         The file must have the same checksum as in `md5_checksum`.
     """
     # Your code here;
-    md5_checksum = "747822ca4436819145de8f9e410ca9ca"
+    md5_checksum = "6acd9a9ac8758dc0508b1775ba672516"
     # Your code here;
-    google_drive_link = "https://drive.google.com/file/d/1uEwFPS6Gb-BBKbJIfv3hvdaXZ0sdXtOo/view?usp=sharing"
+    google_drive_link = "https://drive.google.com/file/d/1HOGoYd7gLVlQ4-tHsKl5K0v0IwQULYRf/view?usp=sharing"
 
     return md5_checksum, google_drive_link
