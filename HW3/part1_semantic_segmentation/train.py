@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
+import wandb
 
 from .model import UNet, DeepLab
 from .dataset import FloodNet
@@ -99,7 +100,9 @@ class SegModel(pl.LightningModule):
         results = torch.cat(torch.cat([img, pred_vis, mask_vis], dim=3).split(1, dim=0), dim=2)
         results_thumbnail = F.interpolate(results, scale_factor=0.25, mode='bilinear')[0]
 
-        self.logger.experiment.add_image('results', results_thumbnail, self.current_epoch)
+
+        self.logger.experiment.log({"results": [wandb.Image(results_thumbnail, caption=self.current_epoch)]})
+        #self.logger.experiment.add_image('results', results_thumbnail, self.current_epoch)
 
     def visualize_mask(self, mask):
         b, h, w = mask.shape

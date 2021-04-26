@@ -12,7 +12,7 @@ def calc_val_data(preds, masks, num_classes):
     
 
     # Output shapes: B x num_classes
-    for img in range(N):
+    for img in range(B):
         for cls_ in range(num_classes):
             intersection[img,cls_] = ((masks == cls_) & (preds[img] == cls_)).sum()
             union[img,cls_] = ((masks == cls_) | (preds[img] == cls_)).sum()
