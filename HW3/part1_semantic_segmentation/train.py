@@ -12,12 +12,22 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
-import wandb
 
 from .model import UNet, DeepLab
 from .dataset import FloodNet
 from . import loss
 
+
+USE_WANDB = False 
+#delete before submittion
+#---------------------------------------------------------------
+try:
+    import wandb
+    USE_WANDB = True
+except ImportError:
+    USE_WANDB = False
+    print("Error with importing wandb. Using Tensorboard")
+#---------------------------------------------------------------
 
 
 class SegModel(pl.LightningModule):
@@ -27,11 +37,11 @@ class SegModel(pl.LightningModule):
         backbone: str,
         aspp: bool,
         augment_data: bool,
-        optimizer: str,
-        scheduler: str,
-        lr: float,
-        batch_size: int,
-        data_path: str,
+        optimizer: str = 'default',
+        scheduler: str = 'default',
+        lr: float = None,
+        batch_size: int = 16,
+        data_path: str = 'datasets/tiny-floodnet-challenge',
         image_size: int = 256,
     ):
         super(SegModel, self).__init__()
@@ -65,13 +75,27 @@ class SegModel(pl.LightningModule):
 
         train_loss = F.cross_entropy(pred, mask)
 
+        #LOGGING 
         self.log('train_loss', train_loss, prog_bar=True)
+#---------------------------------------------------------------
+        if USE_WANDB:
+            wandb.log({'Train_loss': train_loss})
+#---------------------------------------------------------------
 
         return train_loss
 
     def validation_step(self, batch, batch_idx):
         img, mask = batch
         pred = self.forward(img)
+
+        #validation loss calcualation
+        val_loss = F.cross_entropy(pred, mask)
+        #LOGGING
+        self.log("val_loss", val_loss, prog_bar = True)
+#---------------------------------------------------------------
+        if USE_WANDB:
+            wandb.log({'val_loss': val_loss})
+#---------------------------------------------------------------        
 
         intersection, union, target = loss.calc_val_data(pred, mask, self.num_classes)
 
@@ -84,11 +108,15 @@ class SegModel(pl.LightningModule):
 
         mean_iou, mean_class_rec, mean_acc = loss.calc_val_loss(intersection, union, target, self.eps)
 
+        #LOGGING
         log_dict = {'mean_iou': mean_iou, 'mean_class_rec': mean_class_rec, 'mean_acc': mean_acc}
 
         for k, v in log_dict.items():
             self.log(k, v, prog_bar=True)
-
+#---------------------------------------------------------------   
+        if USE_WANDB:
+            wandb.log(log_dict)
+#---------------------------------------------------------------   
         # Visualize results
         img = torch.cat([x['img'] for x in outputs]).cpu()
         pred = torch.cat([x['pred'] for x in outputs]).cpu()
@@ -100,10 +128,12 @@ class SegModel(pl.LightningModule):
         results = torch.cat(torch.cat([img, pred_vis, mask_vis], dim=3).split(1, dim=0), dim=2)
         results_thumbnail = F.interpolate(results, scale_factor=0.25, mode='bilinear')[0]
 
-
-        self.logger.experiment.log({"results": [wandb.Image(results_thumbnail, caption=self.current_epoch)]})
-        #self.logger.experiment.add_image('results', results_thumbnail, self.current_epoch)
-
+        #LOGGING
+        self.logger.experiment.add_image('results', results_thumbnail, self.current_epoch)
+#--------------------------------------------------------------- 
+        if USE_WANDB:
+            wandb.log({"Images": [wandb.Image(results_thumbnail, caption='Epoch: '+str(self.current_epoch))]})
+#--------------------------------------------------------------- 
     def visualize_mask(self, mask):
         b, h, w = mask.shape
         mask_ = mask.view(-1)
@@ -118,12 +148,30 @@ class SegModel(pl.LightningModule):
     def configure_optimizers(self):
         # TODO: 2 points
         # Use self.optimizer and self.scheduler to call different optimizers
-        opt =  torch.optim.Adam(self.net.parameters(), lr = 1e-3)                   #None # TODO: init optimizer
-        sch =  torch.optim.lr_scheduler.MultiStepLR(opt, [20,30], gamma = 0.1)      #None # TODO: init learning rate scheduler
+        if self.optimizer == 'default':
+            opt = torch.optim.Adam(self.net.parameters(), lr = 1e-3)
+        elif self.optimizer == 'Adam':
+            opt = torch.optim.Adam(self.net.parameters(), lr = self.lr)
+        elif self.optimizer == 'Adam_L2':
+            opt = torch.optim.Adam(self.net.parameters(), lr = self.lr, weight_decay = 1e-4)
+        else: 
+            print('Wrong optimizer. Using default')
+            opt = torch.optim.Adam(self.net.parameters(), lr = 1e-3)
+
+        # TODO: init learning rate scheduler
+        if self.scheduler == 'default':
+            sch = torch.optim.lr_scheduler.MultiStepLR(opt, [20,30], gamma = 0.1) 
+        elif self.scheduler == 'ReduceLROnPlateau':
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt)
+            sch = {'scheduler': lr_scheduler, 'interval': 'step', 'monitor': 'val_loss'}
+        else:
+            print('Wrong scheduler. Using default')
+            sch = torch.optim.lr_scheduler.MultiStepLR(opt, [20,30], gamma = 0.1)
+
         return [opt], [sch]
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, num_workers=2, batch_size=self.batch_size, shuffle=True)
+        return DataLoader(self.train_dataset, num_workers=8, batch_size=self.batch_size, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.test_dataset, num_workers=2, batch_size=1, shuffle=False)
+        return DataLoader(self.test_dataset, num_workers=8, batch_size=1, shuffle=False)

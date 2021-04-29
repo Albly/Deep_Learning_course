@@ -5,8 +5,11 @@ from torchvision import models
 import numpy as np
 from torch.nn import Conv2d, ReLU, BatchNorm2d, Dropout, ConvTranspose2d, MaxPool2d
 
-
 class DownBlock(torch.nn.Module):
+    '''
+    DownBlock for UNet network
+    After forward returns out from pooling layer and skip connection for UpBlock 
+    '''
     def __init__(self, in_ch, out_ch):
         super(DownBlock, self).__init__()
 
@@ -22,11 +25,17 @@ class DownBlock(torch.nn.Module):
         self.pool  = MaxPool2d(kernel_size = 2, stride = 2, padding = 0)
     
     def forward(self, x):
+        # skip connection
         x = self.block(x)
+        # returns out and skip
         return self.pool(x), x 
 
 
 class BaseBlock(torch.nn.Module):
+    '''
+    Base block for UNet network.
+    Applies 2 convolutions without changing size of data
+    '''
     def __init__(self, in_ch):
         super(BaseBlock, self).__init__()
         
@@ -44,6 +53,11 @@ class BaseBlock(torch.nn.Module):
 
 
 class UpBlock(torch.nn.Module):
+    '''
+    Upblock block for UNet network 
+    Does upsampling, concatenating upsampled output with skip connection from DownBlock
+    And applies 2 conv2d
+    '''
     def __init__(self, in_ch , out_ch):
         super(UpBlock, self).__init__()
 
@@ -62,7 +76,9 @@ class UpBlock(torch.nn.Module):
         
 
     def forward(self, x, skip):
-        x = self.up(x) 
+        # upsampling
+        x = self.up(x)
+        # concat and convolutions 
         x = self.block(torch.cat((skip, x), dim = 1))
 
         return x 
@@ -100,55 +116,68 @@ class UNet(nn.Module):
         super(UNet, self).__init__()
         self.num_classes = num_classes
         self.num_down_blocks = num_down_blocks  
+        # calculates shapes for each block in the net
         shapes = np.round(np.geomspace(min_channels,max_channels,num_down_blocks+1)).astype(int).tolist()
 
+        # input layer to transform number of channels to desired shape
         self.in_layer = Conv2d(3,min_channels, 1)
 
+        # Adding to list downBlocks
         self.downblocks = nn.ModuleList([])
         for i in range(num_down_blocks):
             self.downblocks.append(DownBlock(in_ch = shapes[i], out_ch = shapes[i+1]))
 
-
+        #BaseBlock
         self.baseBlock = BaseBlock(max_channels)
 
-
+        # Adding to list upBlocks
         self.upBlocks = nn.ModuleList([])
         shapes.reverse()
         for i in range(num_down_blocks):
             self.upBlocks.append(UpBlock(in_ch = shapes[i], out_ch = shapes[i+1]))
         
+        #Last layer to match the sizes
         self.out_layer = Conv2d(min_channels , self.num_classes, 1)
 
 
     def forward(self, inputs):
-        
+        # calculate lenght and width of input images 
         shape_h, shape_w = inputs.shape[2],inputs.shape[3]
+        
+        # calculate new length and width that matches to network architecture
         new_shape_h = (shape_h//2**(self.num_down_blocks))*2**(self.num_down_blocks)
         new_shape_w = (shape_w//2**(self.num_down_blocks))*2**(self.num_down_blocks)
+        # creating image transformation from old size to new one 
         self.squeeze = nn.Upsample(size = (new_shape_h, new_shape_w), mode= 'bilinear', align_corners=False)
+        # image transformation to return inital image size
         self.unsqueeze = nn.Upsample(size = (shape_h, shape_w), mode= 'bilinear', align_corners=False)
 
         x = inputs
         skips = []
 
+        # Resize images
         x = self.squeeze(x)
+        # Change number of channels
         x = self.in_layer(x)
 
-
+        # downBlocks
         for downblock in self.downblocks:
             x, skip = downblock(x)
             skips.append(skip)
 
+        # base block 
         x = self.baseBlock(x)
 
-
+        # upBlocks
         skips.reverse()
         for upblock, skip in zip(self.upBlocks, skips):
 
             x = upblock(x,skip)
         
+        # matching number of output channels
         x = self.out_layer(x)
 
+        # Resize data to initial size
         logits = self.unsqueeze(x)
 
         #logits = None # TODO
@@ -162,6 +191,7 @@ class UNet(nn.Module):
 # ========================================================================================================
 
 class BlockConv2d(nn.Sequential):
+    '''Conv block for deepLab'''
     def __init__(self,in_channels, out_channels, kernel_size):
         super(BlockConv2d, self).__init__(
             nn.Conv2d(in_channels, out_channels, kernel_size, bias= False),
@@ -170,6 +200,7 @@ class BlockConv2d(nn.Sequential):
         )
 
 class AtrousConv2d(nn.Sequential):
+    '''block with padded and dillated convs'''
     def __init__(self, in_channels, out_channels, kernel_size ,dilation=1 ):
         super(AtrousConv2d, self).__init__(
             nn.Conv2d(in_channels, out_channels, kernel_size, padding=dilation, dilation = dilation , bias= False),
@@ -179,6 +210,7 @@ class AtrousConv2d(nn.Sequential):
     
 
 class GlobalPool(nn.Module):
+    '''Image pooling'''
     def __init__(self, in_channels, out_channels):
         super(GlobalPool,self).__init__()
         self.module = nn.Sequential(
@@ -189,8 +221,10 @@ class GlobalPool(nn.Module):
         )
         
     def forward(self,x):
+        # calculate image size
         h,w = x.shape[2], x.shape[3]
         self.ups = nn.Upsample(size = (h,w), mode= 'bilinear', align_corners=False)
+        # do pooling, conv and upsampling
         return self.ups(self.module(x))
 
 
@@ -216,6 +250,8 @@ class DeepLab(nn.Module):
         self.backbone = backbone
         self.num_classes = num_classes
         self.init_backbone()
+        self.isAspp = aspp
+
         if aspp:
             self.aspp = ASPP(self.out_features, 256, [12, 24, 36])
 
@@ -224,17 +260,20 @@ class DeepLab(nn.Module):
     def init_backbone(self):
         # TODO: initialize an ImageNet-pretrained backbone
         if self.backbone == 'resnet18':
-            self.back = models.resnet18()
+            # download pretrained model
+            self.back = models.resnet18(pretrained=True)
+            # Cut last layers form net (Linear, pooling, batchnorms)
             self.back = nn.Sequential(*list(self.back.children())[:-2])
+            # number of output channels from backbone
             self.out_features = 512 # TODO: number of output features in the backbone
 
         elif self.backbone == 'vgg11_bn':
-            self.back = models.vgg11_bn()
+            self.back = models.vgg11_bn(pretrained=True)
             self.back = nn.Sequential(*list(self.back.children())[:-1][0])
             self.out_features = 512# None # TODO
 
         elif self.backbone == 'mobilenet_v3_small':
-            self.back = models.mobilenet_v3_small()
+            self.back = models.mobilenet_v3_small(pretrained=True)
             self.back = nn.Sequential(*list(self.back.children())[:-1][0])
             self.out_features = 576 #None # TODO
 
@@ -252,11 +291,16 @@ class DeepLab(nn.Module):
         return x
 
     def forward(self, inputs):
-        #pass # TODO
+        
         height,width = inputs.shape[2],inputs.shape[3]
 
+        # Calculate output with or without the ASPP block
+        if self.isAspp:
+            logits = self.head(self.aspp(self.back(inputs)))
+        else:
+            logits = self.head(self.back(inputs))
 
-        logits = self.head(self.aspp(self.back(inputs)))
+        # upsampling
         logits = nn.functional.interpolate(logits, size= (height,width), mode = 'bilinear', align_corners=False)
 
         assert logits.shape == (inputs.shape[0], self.num_classes, inputs.shape[2], inputs.shape[3]), 'Wrong shape of the logits'
@@ -294,26 +338,33 @@ class ASPP(nn.Module):
     """
     def __init__(self, in_channels, num_channels, atrous_rates):
         super(ASPP, self).__init__()
+        # sequence of paralel transformations 
         self.paralels = nn.ModuleList([
+                                        # Conv 1x1
                                        BlockConv2d(in_channels, num_channels, 1)]
                                       ) 
 
+        # dillated convolutions
         for rate in atrous_rates:
             self.paralels.append(AtrousConv2d(in_channels,num_channels,3,rate))
 
+        # image pooling
         self.paralels.append(GlobalPool(in_channels, num_channels))
-        #WHY out is in_channels ???????????????????????
+        
+        # layer for mathicng number of cannels
         self.bottleneck = BlockConv2d(len(self.paralels)*num_channels, in_channels, 1 )
 
     def forward(self, x):
         # TODO: forward pass through the ASPP module
         res = []
 
+        # do all independent transformations
         for module in self.paralels:
             res.append(module(x))
-        
+        # concatenate outputs from independent transformations
         res = torch.cat(res,dim=1)
 
+        # apply channel matching
         res = self.bottleneck(res)
 
         assert res.shape[1] == x.shape[1], 'Wrong number of output channels'

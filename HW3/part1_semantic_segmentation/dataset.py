@@ -38,16 +38,18 @@ class FloodNet(Dataset):
             # Random color augmentation
             self.transform = A.Compose([
                 A.Rotate(always_apply = False, p = 0.8, limit = (-45,45), interpolation = 2 ),
-                A.RandomResizedCrop(always_apply=True, p = 1.0, height = self.img_size, width = self.img_size),
+                A.Resize(256,256),
+                A.RandomCrop(always_apply=True, p = 1.0, height = 256, width = 256),
                 A.HorizontalFlip(always_apply = False, p = 0.5),
                 A.VerticalFlip(always_apply = False, p = 0.5),
+                #color augmentation
                 A.CLAHE(always_apply = False, p = 0.5)
             ])
 
         else:
         	# TODO: random crop to img_size
             self.transform = A.Compose([
-                A.Crop(always_apply=True, p = 1.0, y_max = self.img_size, x_max = self.img_size)
+                A.Crop(always_apply=True, p = 1.0, y_max = 256, x_max =256)
             ])
         
         self.to_tensor = ToTensor()
